@@ -15,8 +15,10 @@ from sklearn.metrics import (
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# from config import Config
-# from model import LitModel
+from config import Config
+from model import LitModel
+from baseline_models import BaselineModels
+from utils import plot_comparison
 
 
 def evaluate_model():
@@ -171,5 +173,43 @@ def evaluate_model():
     print("Summary table:\n", pd.DataFrame(data))
 
 
+def benchmark_against_baselines(test_dataset):
+    """Compare transformer against traditional ML models"""
+    # Convert test data to numpy arrays
+    features = np.array([sample[0] for sample in test_dataset])
+    targets = np.array([sample[1] for sample in test_dataset])
+
+    # Split features/targets
+    split_idx = int(0.8 * len(features))
+    train_features, test_features = features[:split_idx], features[split_idx:]
+    train_targets, test_targets = targets[:split_idx], targets[split_idx:]
+
+    # Initialize and run baselines
+    baselines = BaselineModels(
+        train_features, train_targets, test_features, test_targets
+    )
+    baseline_results = baselines.train_and_evaluate()
+
+    return baseline_results
+
+
 if __name__ == "__main__":
     evaluate_model()
+
+    # Get transformer metrics
+    transformer_metrics = {
+        "diagnosis_accuracy": accuracy_score(y_true_diag, y_pred_diag),
+        "diagnosis_f1": f1_score(y_true_diag, y_pred_diag),
+        "class_accuracy": accuracy_score(y_true_class, y_pred_class),
+        "class_f1": f1_score(y_true_class, y_pred_class),
+    }
+
+    # Benchmark against baselines
+    baseline_results = benchmark_against_baselines(test_dataset)
+    comparison_df = BaselineModels.generate_report(transformer_metrics)
+
+    print("\n⚡ Model Comparison Results:")
+    print(comparison_df.sort_values("Diagnosis F1", ascending=False))
+
+    # Generate visual comparison
+    plot_comparison(comparison_df)
