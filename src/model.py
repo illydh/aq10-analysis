@@ -109,5 +109,24 @@ class LitModel(LightningModule):
 
         return total_loss
 
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        diag_logits, class_logits = self.model(x)
+
+        diag_loss = self.diag_loss(diag_logits, y[:, 0].float())
+        class_loss = self.class_loss(class_logits, y[:, 1].float())
+        total_loss = (diag_loss + class_loss) / 2
+
+        self.log_dict(
+            {
+                "test_loss": total_loss,
+                "test_diag_loss": diag_loss,
+                "test_class_loss": class_loss,
+            },
+            prog_bar=True,
+        )
+
+        return total_loss
+
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=Config.LEARNING_RATE)
