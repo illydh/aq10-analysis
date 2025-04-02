@@ -3,41 +3,45 @@ import torch
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    f1_score,
     precision_score,
     recall_score,
-    f1_score,
+    classification_report,
     confusion_matrix,
     roc_curve,
     auc,
     precision_recall_curve,
-    classification_report,
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from config import Config
 from model import LitModel
-from baseline_models import BaselineModels
-from utils import plot_comparison
+import joblib
+from pathlib import Path
 
 
-def evaluate_model():
+def evaluate_transformer():
+    """
+    Loads the best Transformer checkpoint and evaluates it on the test dataset.
+    Prints accuracy, precision, recall, F1, confusion matrices, ROC, and PR curves.
+    """
     # Load test dataset
     with open(Config.PROCESSED_DATA_DIR / "test_dataset.pkl", "rb") as f:
         test_dataset = pickle.load(f)
 
-    # Create data loader
+    # Create DataLoader
     test_loader = torch.utils.data.DataLoader(
         test_dataset, batch_size=Config.BATCH_SIZE, num_workers=4
     )
 
-    # Load trained model
-    model = LitModel.load_from_checkpoint(
-        str(Config.CHECKPOINT_DIR / "best-checkpoint-v6.ckpt")
-    )
+    # Load trained model (update checkpoint name if necessary)
+    model_ckpt = Path(Config.CHECKPOINT_DIR) / "best-checkpoint-v13.ckpt"
+    print(f"Loading Transformer checkpoint from: {model_ckpt}")
+    model = LitModel.load_from_checkpoint(str(model_ckpt))
     model.eval()
 
-    # Get predictions
+    # Accumulate predictions
     y_true_diag, y_true_class = [], []
     y_pred_diag, y_pred_class = [], []
 
@@ -52,164 +56,161 @@ def evaluate_model():
             y_pred_diag.extend(torch.sigmoid(diag_logits).cpu().numpy())
             y_pred_class.extend(torch.sigmoid(class_logits).cpu().numpy())
 
-    # Convert to binary predictions
+    # Convert probabilities to binary predictions
     y_pred_diag = np.array(y_pred_diag) > 0.5
     y_pred_class = np.array(y_pred_class) > 0.5
     y_true_diag = np.array(y_true_diag)
     y_true_class = np.array(y_true_class)
 
-    # Calculate metrics
     def print_metrics(y_true, y_pred, task_name):
-        print(f"\n{task_name} Metrics:")
-        print(f"Accuracy: {accuracy_score(y_true, y_pred):.4f}")
-        print(f"Precision: {precision_score(y_true, y_pred):.4f}")
-        print(f"Recall: {recall_score(y_true, y_pred):.4f}")
-        print(f"F1 Score: {f1_score(y_true, y_pred):.4f}")
+        """Print confusion matrix, accuracy, precision, recall, and F1 for a given task."""
+        acc = accuracy_score(y_true, y_pred)
+        f1 = f1_score(y_true, y_pred)
+        prec = precision_score(y_true, y_pred)
+        rec = recall_score(y_true, y_pred)
 
-        ### Confusion matrix
+        print(f"\n{task_name} Metrics:")
+        print(f" Accuracy:  {acc:.4f}")
+        print(f" Precision: {prec:.4f}")
+        print(f" Recall:    {rec:.4f}")
+        print(f" F1 Score:  {f1:.4f}")
+
+        # Confusion matrix
         cm = confusion_matrix(y_true, y_pred)
-        plt.figure(figsize=(6, 6))
-        sns.heatmap(
-            cm,
-            annot=True,
-            fmt="d",
-            cmap="Blues",
-            xticklabels=["Negative", "Positive"],
-            yticklabels=["Negative", "Positive"],
-        )
+        plt.figure(figsize=(5, 5))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
         plt.title(f"{task_name} Confusion Matrix")
         plt.xlabel("Predicted")
         plt.ylabel("True")
         plt.show()
 
-        ### plot_roc_curve
+        # ROC curve
         fpr, tpr, _ = roc_curve(y_true, y_pred)
         roc_auc = auc(fpr, tpr)
-
-        plt.figure(figsize=(8, 6))
-        plt.plot(
-            fpr, tpr, color="darkorange", lw=2, label=f"ROC curve (AUC = {roc_auc:.2f})"
-        )
+        plt.figure()
+        plt.plot(fpr, tpr, color="darkorange", lw=2, label=f"AUC = {roc_auc:.2f}")
         plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
-        plt.title(f"ROC Curve for {task_name}")
+        plt.title(f"ROC for {task_name}")
         plt.legend(loc="lower right")
         plt.show()
 
-        ### plot_precision_recall_curve
-        precision, recall, _ = precision_recall_curve(y_true, y_pred)
-        pr_auc = auc(recall, precision)
-
-        plt.figure(figsize=(8, 6))
+        # Precision-Recall curve
+        precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_pred)
+        pr_auc = auc(recall_vals, precision_vals)
+        plt.figure()
         plt.plot(
-            recall,
-            precision,
+            recall_vals,
+            precision_vals,
             color="blue",
             lw=2,
-            label=f"PR curve (AUC = {pr_auc:.2f})",
+            label=f"PR AUC = {pr_auc:.2f}",
         )
         plt.xlabel("Recall")
         plt.ylabel("Precision")
-        plt.title(f"Precision-Recall Curve for {task_name}")
+        plt.title(f"Precision-Recall for {task_name}")
         plt.legend(loc="upper right")
         plt.show()
 
-        return {
-            "accuracy": accuracy_score(y_true, y_pred),
-            "precision": precision_score(y_true, y_pred),
-            "recall": recall_score(y_true, y_pred),
-            "f1": f1_score(y_true, y_pred),
+        return acc, prec, rec, f1
+
+    # Print and plot metrics for both tasks
+    diag_acc, diag_prec, diag_rec, diag_f1 = print_metrics(
+        y_true_diag, y_pred_diag, "Diagnosis"
+    )
+    class_acc, class_prec, class_rec, class_f1 = print_metrics(
+        y_true_class, y_pred_class, "Classification"
+    )
+
+    # Classification reports
+    print("\nDiagnosis Classification Report:")
+    print(classification_report(y_true_diag, y_pred_diag, target_names=["Neg", "Pos"]))
+    print("ASD Classification Report:")
+    print(
+        classification_report(y_true_class, y_pred_class, target_names=["Neg", "Pos"])
+    )
+
+    # Return dictionary with final metrics
+    return [
+        {
+            "model_name": "Transformer",
+            "diagnosis_accuracy": diag_acc,
+            "diagnosis_precision": diag_prec,
+            "diagnosis_recall": diag_rec,
+            "diagnosis_f1": diag_f1,
+            "class_accuracy": class_acc,
+            "class_precision": class_prec,
+            "class_recall": class_rec,
+            "class_f1": class_f1,
         }
+    ]
 
-    evals_diag = print_metrics(y_true_diag, y_pred_diag, "Diagnosis")
-    evals_class = print_metrics(y_true_class, y_pred_class, "Classification")
 
-    ### Accuracy Bar plot
-    accuracies = {
-        "Diagnosis": evals_diag["accuracy"],
-        "Classification": evals_class["accuracy"],
-    }
-    plt.figure(figsize=(8, 5))
-    plt.bar(accuracies.keys(), accuracies.values(), color=["blue", "green"])
-    plt.title("Model Accuracy on Test Data")
-    plt.xlabel("Task")
-    plt.ylabel("Accuracy")
-    plt.ylim(0, 1)
-    for i, v in enumerate(accuracies.values()):
-        plt.text(i, v + 0.02, f"{v:.2f}", ha="center", fontsize=12)
-    plt.show()
+def evaluate_baselines():
+    """
+    Loads each trained baseline model (.joblib) from the 'models' folder
+    and evaluates on the test dataset, printing accuracy, precision, recall, and F1 results.
+    """
+    # Load test dataset
+    with open(Config.PROCESSED_DATA_DIR / "test_dataset.pkl", "rb") as f:
+        test_dataset = pickle.load(f)
 
-    ### classification report
-    print("Classification Report for Diagnosis:")
-    print(
-        classification_report(
-            y_true_diag, y_pred_diag, target_names=["Negative", "Positive"]
+    # Convert test dataset to numpy
+    test_features = np.array([sample[0] for sample in test_dataset])
+    test_targets = np.array([sample[1] for sample in test_dataset])
+
+    # List of known baseline model filenames
+    possible_models = [
+        "svm.joblib",
+        "decision_tree.joblib",
+        "random_forest.joblib",
+        "logistic_regression.joblib",
+        "knn.joblib",
+        "naive_bayes.joblib",
+        "mlp.joblib",
+        "xgboost.joblib",
+        "lightgbm.joblib",
+    ]
+    evaluations = []
+    for filename in possible_models:
+        model_path = Config.MODEL_DIR / filename
+        if not model_path.exists():
+            print(f"Model file not found: {model_path}")
+            continue
+
+        model = joblib.load(model_path)
+        model_name = filename.replace(".joblib", "").title().replace("_", " ")
+
+        # Evaluate on 'diagnosis' (column 0)
+        diag_preds = model.predict(test_features)
+        diag_acc = accuracy_score(test_targets[:, 0], diag_preds)
+        diag_prec = precision_score(test_targets[:, 0], diag_preds)
+        diag_rec = recall_score(test_targets[:, 0], diag_preds)
+        diag_f1 = f1_score(test_targets[:, 0], diag_preds)
+
+        # Evaluate on 'classification' (column 1)
+        # For consistency, we do not want to re-fit the model on test data,
+        # but if you want each baseline to be separately trained for classification:
+        # just call model.fit(train_features, train_targets[:, 1]) in train.py
+        # or load a second saved model. For demonstration, we'll just do .predict here.
+        class_preds = model.predict(test_features)
+        class_acc = accuracy_score(test_targets[:, 1], class_preds)
+        class_prec = precision_score(test_targets[:, 1], class_preds)
+        class_rec = recall_score(test_targets[:, 1], class_preds)
+        class_f1 = f1_score(test_targets[:, 1], class_preds)
+
+        evaluations.append(
+            {
+                "model_name": model_name,
+                "diagnosis_accuracy": diag_acc,
+                "diagnosis_precision": diag_prec,
+                "diagnosis_recall": diag_rec,
+                "diagnosis_f1": diag_f1,
+                "class_accuracy": class_acc,
+                "class_precision": class_prec,
+                "class_recall": class_rec,
+                "class_f1": class_f1,
+            }
         )
-    )
-    print("Classification Report for Classification:")
-    print(
-        classification_report(
-            y_true_class, y_pred_class, target_names=["Negative", "Positive"]
-        )
-    )
-
-    ### Summary Data
-    data = {
-        "Metric": ["Accuracy", "Precision", "Recall", "F1-Score"],
-        "Diagnosis": [
-            evals_diag["accuracy"],
-            evals_diag["precision"],
-            evals_diag["recall"],
-            evals_diag["f1"],
-        ],
-        "Classification": [
-            evals_class["accuracy"],
-            evals_class["precision"],
-            evals_class["recall"],
-            evals_class["f1"],
-        ],
-    }
-    print("Summary table:\n", pd.DataFrame(data))
-
-
-def benchmark_against_baselines(test_dataset):
-    """Compare transformer against traditional ML models"""
-    # Convert test data to numpy arrays
-    features = np.array([sample[0] for sample in test_dataset])
-    targets = np.array([sample[1] for sample in test_dataset])
-
-    # Split features/targets
-    split_idx = int(0.8 * len(features))
-    train_features, test_features = features[:split_idx], features[split_idx:]
-    train_targets, test_targets = targets[:split_idx], targets[split_idx:]
-
-    # Initialize and run baselines
-    baselines = BaselineModels(
-        train_features, train_targets, test_features, test_targets
-    )
-    baseline_results = baselines.train_and_evaluate()
-
-    return baseline_results
-
-
-if __name__ == "__main__":
-    evaluate_model()
-
-    # Get transformer metrics
-    transformer_metrics = {
-        "diagnosis_accuracy": accuracy_score(y_true_diag, y_pred_diag),
-        "diagnosis_f1": f1_score(y_true_diag, y_pred_diag),
-        "class_accuracy": accuracy_score(y_true_class, y_pred_class),
-        "class_f1": f1_score(y_true_class, y_pred_class),
-    }
-
-    # Benchmark against baselines
-    baseline_results = benchmark_against_baselines(test_dataset)
-    comparison_df = BaselineModels.generate_report(transformer_metrics)
-
-    print("\n⚡ Model Comparison Results:")
-    print(comparison_df.sort_values("Diagnosis F1", ascending=False))
-
-    # Generate visual comparison
-    plot_comparison(comparison_df)
+    return evaluations
