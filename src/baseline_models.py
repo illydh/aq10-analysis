@@ -2,11 +2,14 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 from sklearn.metrics import accuracy_score, f1_score
 import pandas as pd
-import numpy as np
 import joblib
-from pathlib import Path
 
 
 class BaselineModels:
@@ -16,6 +19,11 @@ class BaselineModels:
             "Decision Tree": DecisionTreeClassifier(max_depth=5),
             "Random Forest": RandomForestClassifier(n_estimators=100),
             "Logistic Regression": LogisticRegression(max_iter=1000),
+            "KNN": KNeighborsClassifier(n_neighbors=5),
+            "Naive Bayes": GaussianNB(),
+            "MLP": MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=2000),
+            "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric="logloss"),
+            "LightGBM": LGBMClassifier(),
         }
         self.train_features = train_features
         self.train_targets = train_targets
@@ -53,7 +61,7 @@ class BaselineModels:
 
             # Save models
             joblib.dump(
-                model, Path("models") / f"{name.lower().replace(' ', '_')}.joblib"
+                model, Config.MODEL_DIR / f"{name.lower().replace(' ', '_')}.joblib"
             )
 
         return pd.DataFrame(self.results)
