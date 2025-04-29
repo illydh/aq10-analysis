@@ -1,68 +1,68 @@
 from torch.utils.data import Dataset
 import numpy as np
 import pandas as pd
-from typing import Dict
-import multiprocessing as mp
-from tqdm import tqdm
+import torch
 
 
 class ASDDataset(Dataset):
-    """PyTorch Dataset for autism screening data."""
+    """PyTorch Dataset for autism screening data with optional augmentation."""
 
-    def __init__(self, feature_df, tgt_df):
+    def __init__(self, feature_df, tgt_df, augment: bool = False):
         self.feature_df = feature_df.to_pandas(use_pyarrow_extension_array=True)
         self.tgt_df = tgt_df.to_pandas(use_pyarrow_extension_array=True)
+        self.augment = augment
 
-        # Compute normalization parameters
         self.age_min = self.feature_df["age"].min()
         self.age_max = self.feature_df["age"].max()
-        self.result_min = self.feature_df["result"].min()
-        self.result_max = self.feature_df["result"].max()
-
         self.keys = self.feature_df.index.tolist()
         self._precompute_features()
 
     def _precompute_features(self):
         """Precompute features for faster training."""
-        self.tgt_arrays: Dict[int, np.ndarray] = {}
-        self.feature_arrays: Dict[int, np.ndarray] = {}
+        self.tgt_arrays = {}
+        self.feature_arrays = {}
 
-        with mp.Pool(processes=min(8, mp.cpu_count())) as pool:
-            results = pool.map(
-                self._process_key,
-                tqdm(self.keys, desc="Precomputing features", total=len(self.keys)),
+        for key in self.keys:
+            self.tgt_arrays[key] = self._transform_target(self.tgt_df.loc[key])
+            self.feature_arrays[key] = self._transform_features(
+                self.feature_df.loc[key]
             )
 
-            for key, tgt_array, feature_array in results:
-                self.tgt_arrays[key] = tgt_array
-                self.feature_arrays[key] = feature_array
-
-    def _process_key(self, key: int):
-        """Process a single data sample."""
-        tgt_array = self._transform_target(self.tgt_df.loc[key])
-        feature_array = self._transform_features(self.feature_df.loc[key])
-        return key, tgt_array, feature_array
-
     def _transform_features(self, row: pd.Series) -> np.ndarray:
-        """Transform input features into numpy array."""
-        features = row[
-            [f"A{i}_Score" for i in range(1, 11)] + ["age", "gender", "result"]
-        ]
+        features = row[[f"A{i}_Score" for i in range(1, 11)] + ["age", "gender"]].copy()
         features["age"] = (features["age"] - self.age_min) / (
             self.age_max - self.age_min
-        )
-        features["result"] = (features["result"] - self.result_min) / (
-            self.result_max - self.result_min
         )
         return features.values.astype(np.float32)
 
     def _transform_target(self, row: pd.Series) -> np.ndarray:
-        """Transform target into numpy array."""
-        return np.array([row["diagnosis"], row["classification"]], dtype=np.float32)
+        return np.array([row["diagnosis"]], dtype=np.float32)
+
+    def _augment_features(self, features: np.ndarray) -> np.ndarray:
+        # Gaussian noise only for AQ10 + age (exclude gender)
+        aq_age = features[:-1]
+        gender = features[-1:]
+
+        noise = np.random.normal(loc=0.0, scale=0.05, size=aq_age.shape)
+        aq_age = aq_age + noise
+
+        # Optional: randomly mask one AQ score (simulate missing answer)
+        if np.random.rand() < 0.2:
+            idx = np.random.randint(0, 10)
+            aq_age[idx] = 0.0
+
+        return np.concatenate([aq_age, gender])
 
     def __len__(self):
         return len(self.keys)
 
     def __getitem__(self, idx):
         key = self.keys[idx]
-        return self.feature_arrays[key], self.tgt_arrays[key]
+        features = self.feature_arrays[key]
+        target = self.tgt_arrays[key]
+        if self.augment:
+            features = self._augment_features(features)
+
+        features = torch.tensor(features, dtype=torch.float32)
+        target = torch.tensor(target, dtype=torch.float32)
+        return features, target
