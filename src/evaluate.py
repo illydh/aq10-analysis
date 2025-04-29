@@ -6,7 +6,6 @@ from sklearn.metrics import (
     f1_score,
     precision_score,
     recall_score,
-    classification_report,
     confusion_matrix,
     roc_curve,
     auc,
@@ -14,17 +13,17 @@ from sklearn.metrics import (
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
+import joblib
+from pathlib import Path
 
 from config import Config
 from model import LitModel
-import joblib
-from pathlib import Path
 
 
 def evaluate_transformer():
     """
     Loads the best Transformer checkpoint and evaluates it on the test dataset.
-    Prints accuracy, precision, recall, F1, confusion matrices, ROC, and PR curves.
+    Prints accuracy, precision, recall, F1, confusion matrix, ROC, and PR curves.
     """
     # Load test dataset
     with open(Config.PROCESSED_DATA_DIR / "test_dataset.pkl", "rb") as f:
@@ -35,47 +34,40 @@ def evaluate_transformer():
         test_dataset, batch_size=Config.BATCH_SIZE, num_workers=4
     )
 
-    # Load trained model (update checkpoint name if necessary)
-    model_ckpt = Path(Config.CHECKPOINT_DIR) / "best-checkpoint-v13.ckpt"
-    print(f"Loading Transformer checkpoint from: {model_ckpt}")
-    model = LitModel.load_from_checkpoint(str(model_ckpt))
+    # Load trained model from best checkpoint
+    ckpt_path = Path(Config.CHECKPOINT_DIR) / "best-checkpoint-v17.ckpt"
+    print(f"Loading Transformer checkpoint from: {ckpt_path}")
+    model = LitModel.load_from_checkpoint(str(ckpt_path))
     model.eval()
 
     # Accumulate predictions
-    y_true_diag, y_true_class = [], []
-    y_pred_diag, y_pred_class = [], []
+    y_true, y_pred_probs = [], []
 
     with torch.no_grad():
-        for batch in test_loader:
-            x, y = batch
-            diag_logits, class_logits = model(x)
+        for x, y in test_loader:
+            logits = model(x)
+            y_true.extend(y.cpu().numpy())
+            y_pred_probs.extend(torch.sigmoid(logits).cpu().numpy())
 
-            y_true_diag.extend(y[:, 0].cpu().numpy())
-            y_true_class.extend(y[:, 1].cpu().numpy())
+    # Convert to binary predictions
+    y_true = np.array(y_true)
+    y_pred_probs = np.array(y_pred_probs)
+    y_pred = y_pred_probs > 0.5
 
-            y_pred_diag.extend(torch.sigmoid(diag_logits).cpu().numpy())
-            y_pred_class.extend(torch.sigmoid(class_logits).cpu().numpy())
+    acc = accuracy_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred)
+    prec = precision_score(y_true, y_pred)
+    rec = recall_score(y_true, y_pred)
 
-    # Convert probabilities to binary predictions
-    y_pred_diag = np.array(y_pred_diag) > 0.5
-    y_pred_class = np.array(y_pred_class) > 0.5
-    y_true_diag = np.array(y_true_diag)
-    y_true_class = np.array(y_true_class)
+    print(f"\nModel Metrics:")
+    print(f" Accuracy:  {acc:.4f}")
+    print(f" Precision: {prec:.4f}")
+    print(f" Recall:    {rec:.4f}")
+    print(f" F1 Score:  {f1:.4f}")
 
-    def print_metrics(y_true, y_pred, task_name):
-        """Print confusion matrix, accuracy, precision, recall, and F1 for a given task."""
-        acc = accuracy_score(y_true, y_pred)
-        f1 = f1_score(y_true, y_pred)
-        prec = precision_score(y_true, y_pred)
-        rec = recall_score(y_true, y_pred)
+    def print_metrics(y_true, y_pred, y_probs, task_name="Model"):
 
-        print(f"\n{task_name} Metrics:")
-        print(f" Accuracy:  {acc:.4f}")
-        print(f" Precision: {prec:.4f}")
-        print(f" Recall:    {rec:.4f}")
-        print(f" F1 Score:  {f1:.4f}")
-
-        # Confusion matrix
+        # Confusion Matrix
         cm = confusion_matrix(y_true, y_pred)
         plt.figure(figsize=(5, 5))
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
@@ -84,67 +76,30 @@ def evaluate_transformer():
         plt.ylabel("True")
         plt.show()
 
-        # ROC curve
-        fpr, tpr, _ = roc_curve(y_true, y_pred)
+        # ROC Curve
+        fpr, tpr, _ = roc_curve(y_true, y_probs)
         roc_auc = auc(fpr, tpr)
         plt.figure()
-        plt.plot(fpr, tpr, color="darkorange", lw=2, label=f"AUC = {roc_auc:.2f}")
-        plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
+        plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.2f}", lw=2)
+        plt.plot([0, 1], [0, 1], linestyle="--", color="gray")
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate")
-        plt.title(f"ROC for {task_name}")
-        plt.legend(loc="lower right")
+        plt.title(f"ROC Curve - {task_name}")
+        plt.legend()
         plt.show()
 
-        # Precision-Recall curve
-        precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_pred)
+        # Precision-Recall Curve
+        precision_vals, recall_vals, _ = precision_recall_curve(y_true, y_probs)
         pr_auc = auc(recall_vals, precision_vals)
         plt.figure()
-        plt.plot(
-            recall_vals,
-            precision_vals,
-            color="blue",
-            lw=2,
-            label=f"PR AUC = {pr_auc:.2f}",
-        )
+        plt.plot(recall_vals, precision_vals, label=f"PR AUC = {pr_auc:.2f}", lw=2)
         plt.xlabel("Recall")
         plt.ylabel("Precision")
-        plt.title(f"Precision-Recall for {task_name}")
-        plt.legend(loc="upper right")
+        plt.title(f"Precision-Recall Curve - {task_name}")
+        plt.legend()
         plt.show()
 
-        return acc, prec, rec, f1
-
-    # Print and plot metrics for both tasks
-    diag_acc, diag_prec, diag_rec, diag_f1 = print_metrics(
-        y_true_diag, y_pred_diag, "Diagnosis"
-    )
-    class_acc, class_prec, class_rec, class_f1 = print_metrics(
-        y_true_class, y_pred_class, "Classification"
-    )
-
-    # Classification reports
-    print("\nDiagnosis Classification Report:")
-    print(classification_report(y_true_diag, y_pred_diag, target_names=["Neg", "Pos"]))
-    print("ASD Classification Report:")
-    print(
-        classification_report(y_true_class, y_pred_class, target_names=["Neg", "Pos"])
-    )
-
-    # Return dictionary with final metrics
-    return [
-        {
-            "model_name": "Transformer",
-            "diagnosis_accuracy": diag_acc,
-            "diagnosis_precision": diag_prec,
-            "diagnosis_recall": diag_rec,
-            "diagnosis_f1": diag_f1,
-            "class_accuracy": class_acc,
-            "class_precision": class_prec,
-            "class_recall": class_rec,
-            "class_f1": class_f1,
-        }
-    ]
+    print_metrics(y_true, y_pred, y_pred_probs)
 
 
 def evaluate_baselines():
