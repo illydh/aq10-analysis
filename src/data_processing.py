@@ -2,6 +2,7 @@ import polars as pl
 from typing import Dict, List, Tuple
 import torch
 from transformers import AutoTokenizer
+from sklearn.model_selection import StratifiedShuffleSplit
 
 from config import Config
 
@@ -125,30 +126,51 @@ class DataProcessor:
         adult_df = adult_df.select(common_cols)
         child_df = child_df.select(common_cols)
 
-        return pl.concat([adult_df, child_df], how="vertical")
+        raw_df = pl.concat([adult_df, child_df], how="vertical")
+
+        counts = raw_df["diagnosis"].value_counts().to_dict()
+        print(f"Class distribution: {counts}")
+
+        return raw_df
 
     @staticmethod
     def split_data(df: pl.DataFrame) -> Dict[str, pl.DataFrame]:
         """
-        Split data into train/val/test sets (70/15/15).
-        Returns a dictionary with train/val/test features and targets.
+        Split data into stratified train/val/test sets (70/15/15),
+        preserving the diagnosis class distribution.
         """
-        total_rows = df.height
-        train_size = int(0.7 * total_rows)
-        val_size = int(0.15 * total_rows)
+        # Convert Polars DataFrame to pandas for StratifiedShuffleSplit
+        pdf = df.to_pandas()
 
-        # Shuffle the DataFrame
-        df_shuffled = df.sample(fraction=1, seed=42)
-        features_df = df_shuffled.drop(["diagnosis"])
-        tgt_df = df_shuffled.select(["diagnosis"])
+        # First split: train (70%) vs temp (30%)
+        sss1 = StratifiedShuffleSplit(
+            n_splits=1, test_size=0.3, random_state=Config.SEED
+        )
+        train_idx, temp_idx = next(sss1.split(pdf, pdf["diagnosis"]))
+        train_pdf = pdf.iloc[train_idx]
+        temp_pdf = pdf.iloc[temp_idx]
 
+        # Second split: temp → val (15%) and test (15%) of original
+        sss2 = StratifiedShuffleSplit(
+            n_splits=1, test_size=0.5, random_state=Config.SEED
+        )
+        val_idx, test_idx = next(sss2.split(temp_pdf, temp_pdf["diagnosis"]))
+        val_pdf = temp_pdf.iloc[val_idx]
+        test_pdf = temp_pdf.iloc[test_idx]
+
+        # Convert back to Polars
+        train_df = pl.from_pandas(train_pdf)
+        val_df = pl.from_pandas(val_pdf)
+        test_df = pl.from_pandas(test_pdf)
+
+        # Prepare feature / target splits
         return {
-            "train_features": features_df.slice(0, train_size),
-            "train_targets": tgt_df.slice(0, train_size),
-            "val_features": features_df.slice(train_size, val_size),
-            "val_targets": tgt_df.slice(train_size, val_size),
-            "test_features": features_df.slice(train_size + val_size, total_rows),
-            "test_targets": tgt_df.slice(train_size + val_size, total_rows),
+            "train_features": train_df.drop(["diagnosis"]),
+            "train_targets": train_df.select(["diagnosis"]),
+            "val_features": val_df.drop(["diagnosis"]),
+            "val_targets": val_df.select(["diagnosis"]),
+            "test_features": test_df.drop(["diagnosis"]),
+            "test_targets": test_df.select(["diagnosis"]),
         }
 
     @staticmethod

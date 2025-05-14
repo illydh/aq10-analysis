@@ -1,6 +1,10 @@
+from pathlib import Path
 import pickle
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -11,16 +15,12 @@ from sklearn.metrics import (
     auc,
     precision_recall_curve,
 )
-import matplotlib.pyplot as plt
-import seaborn as sns
-import joblib
-from pathlib import Path
 
 from config import Config
 from model import LitModel
 
 
-def evaluate_transformer():
+def evaluate():
     """
     Loads the best Transformer checkpoint and evaluates it on the test dataset.
     Prints accuracy, precision, recall, F1, confusion matrix, ROC, and PR curves.
@@ -35,7 +35,7 @@ def evaluate_transformer():
     )
 
     # Load trained model from best checkpoint
-    ckpt_path = Path(Config.CHECKPOINT_DIR) / "best-checkpoint-v17.ckpt"
+    ckpt_path = Path(Config.CHECKPOINT_DIR) / "best-checkpoint-v23.ckpt"
     print(f"Loading Transformer checkpoint from: {ckpt_path}")
     model = LitModel.load_from_checkpoint(str(ckpt_path))
     model.eval()
@@ -52,6 +52,13 @@ def evaluate_transformer():
     # Convert to binary predictions
     y_true = np.array(y_true)
     y_pred_probs = np.array(y_pred_probs)
+
+    # ─── Find optimal threshold by maximizing F1 ───
+    thresholds = np.linspace(0.1, 0.9, 81)
+    f1s = [f1_score(y_true, (y_pred_probs > t).astype(int)) for t in thresholds]
+    best_t = thresholds[np.argmax(f1s)]
+    print(f"\nBest F1 threshold on test set: {best_t:.2f}")
+
     y_pred = y_pred_probs > 0.5
 
     acc = accuracy_score(y_true, y_pred)
@@ -102,70 +109,5 @@ def evaluate_transformer():
     print_metrics(y_true, y_pred, y_pred_probs)
 
 
-def evaluate_baselines():
-    """
-    Loads each trained baseline model (.joblib) from the 'models' folder
-    and evaluates on the test dataset, printing accuracy, precision, recall, and F1 results.
-    """
-    # Load test dataset
-    with open(Config.PROCESSED_DATA_DIR / "test_dataset.pkl", "rb") as f:
-        test_dataset = pickle.load(f)
-
-    # Convert test dataset to numpy
-    test_features = np.array([sample[0] for sample in test_dataset])
-    test_targets = np.array([sample[1] for sample in test_dataset])
-
-    # List of known baseline model filenames
-    possible_models = [
-        "svm.joblib",
-        "decision_tree.joblib",
-        "random_forest.joblib",
-        "logistic_regression.joblib",
-        "knn.joblib",
-        "naive_bayes.joblib",
-        "mlp.joblib",
-        "xgboost.joblib",
-        "lightgbm.joblib",
-    ]
-    evaluations = []
-    for filename in possible_models:
-        model_path = Config.MODEL_DIR / filename
-        if not model_path.exists():
-            print(f"Model file not found: {model_path}")
-            continue
-
-        model = joblib.load(model_path)
-        model_name = filename.replace(".joblib", "").title().replace("_", " ")
-
-        # Evaluate on 'diagnosis' (column 0)
-        diag_preds = model.predict(test_features)
-        diag_acc = accuracy_score(test_targets[:, 0], diag_preds)
-        diag_prec = precision_score(test_targets[:, 0], diag_preds)
-        diag_rec = recall_score(test_targets[:, 0], diag_preds)
-        diag_f1 = f1_score(test_targets[:, 0], diag_preds)
-
-        # Evaluate on 'classification' (column 1)
-        # For consistency, we do not want to re-fit the model on test data,
-        # but if you want each baseline to be separately trained for classification:
-        # just call model.fit(train_features, train_targets[:, 1]) in train.py
-        # or load a second saved model. For demonstration, we'll just do .predict here.
-        class_preds = model.predict(test_features)
-        class_acc = accuracy_score(test_targets[:, 1], class_preds)
-        class_prec = precision_score(test_targets[:, 1], class_preds)
-        class_rec = recall_score(test_targets[:, 1], class_preds)
-        class_f1 = f1_score(test_targets[:, 1], class_preds)
-
-        evaluations.append(
-            {
-                "model_name": model_name,
-                "diagnosis_accuracy": diag_acc,
-                "diagnosis_precision": diag_prec,
-                "diagnosis_recall": diag_rec,
-                "diagnosis_f1": diag_f1,
-                "class_accuracy": class_acc,
-                "class_precision": class_prec,
-                "class_recall": class_rec,
-                "class_f1": class_f1,
-            }
-        )
-    return evaluations
+if __name__ == "__main__":
+    evaluate()
