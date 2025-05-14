@@ -35,7 +35,7 @@ def evaluate():
     )
 
     # Load trained model from best checkpoint
-    ckpt_path = Path(Config.CHECKPOINT_DIR) / "best-checkpoint-v23.ckpt"
+    ckpt_path = Path(Config.CHECKPOINT_DIR) / "best-checkpoint.ckpt"
     print(f"Loading Transformer checkpoint from: {ckpt_path}")
     model = LitModel.load_from_checkpoint(str(ckpt_path))
     model.eval()
