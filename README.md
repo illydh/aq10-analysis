@@ -5,10 +5,16 @@
 This project develops a transformer-based model to predict Autism Spectrum Disorder (ASD) diagnosis using AQ-10 questionnaire responses and demographic data. The system analyzes patterns in behavioral traits to assist clinicians in early ASD detection across different age groups.
 
 **Key Features**:
-- Transformer architecture for sequential questionnaire analysis
-- Dual prediction of diagnosis and classification
-- Comprehensive evaluation metrics
-- Age-normalized feature processing
+- **Transformer Inference**  
+  Loads your best PyTorch Lightning checkpoint and infers ASD risk from AQ10 + demographic data.
+- **GPT-Powered Summaries**  
+  Uses the OpenAI API to generate a human-readable summary of the model’s prediction and actionable next steps.
+- **Clean, Modular Structure**  
+  - **Machine Learning** code (data prep, model, training, evaluation) lives alongside  
+  - **Backend** (FastAPI) and  
+  - **Frontend** (React)  
+- **Easy Local Development**  
+  Launch backend and frontend with simple commands.
 
 ## 📊 Dataset
 
@@ -46,15 +52,39 @@ pip install -r requirements.txt
 
 ## 🚀 Usage
 
-Training the Model
+### Training the Model
 ```
 python src/train.py
 ```
 
-Evaluation
+### Evaluation
 ```
 python src/evaluate.py
 ```
+
+### Install & configure backend
+```
+cd backend
+pip install -r requirements.txt
+# set your environment variables:
+export OPENAI_API_KEY="sk-..."
+export MODEL_CHECKPOINT_PATH="app/best.ckpt"
+
+# to activate, run the following line in a separate process
+uvicorn app.main:app --reload --port 8000
+```
+
+### Install & configure frontend
+```
+cd ../frontend
+npm install
+# create a .env.local if desired:
+# REACT_APP_API_URL=http://localhost:8000
+
+# to activate, run the following line in a separate process
+npm start
+```
+
 
 ## 🧠 Model Architecture
 **Sample Data**:
@@ -64,3 +94,13 @@ python src/evaluate.py
     - Diagnosis prediction (clinical ASD)
     - Classification prediction (ASD traits)
 
+# 📦 API Reference
+
+- **Request JSON**:
+```
+{
+  "age": 8,
+  "gender": "M",
+  "responses": [1, 0, 1, 1, 0, 1, 0, 1, 0, 1]
+}
+```
