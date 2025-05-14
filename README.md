@@ -94,7 +94,7 @@ npm start
     - Diagnosis prediction (clinical ASD)
     - Classification prediction (ASD traits)
 
-# 📦 API Reference
+## 📦 API Reference
 
 - **Request JSON**:
 ```
