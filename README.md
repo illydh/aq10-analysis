@@ -104,3 +104,5 @@ npm start
   "responses": [1, 0, 1, 1, 0, 1, 0, 1, 0, 1]
 }
 ```
+
+## Read my final report of the algorithm's design [here](https://github.com/illydh/aq10-analysis/blob/main/reports/final-report.pdf)!
